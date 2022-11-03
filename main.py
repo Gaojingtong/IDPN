@@ -47,10 +47,12 @@ class ControllerNetwork_instance(torch.nn.Module):
     
     def forward(self, x):
         """
-        :param x: Long tensor of size ``(batch_size, num_fields)``
+        :param x: Long tensor of size ``(batch_size, field_dims)``
         """
+        # (batch_size, field_dims, embed_dim)
         embed_x = self.embedding(x)
         output_layer = self.mlp(embed_x.view(-1, self.embed_output_dim))
+        # (batch_size, 2)
         return output_layer#torch.softmax(output_layer, dim=0).squeeze()
 
 class MultiLayerPerceptron(torch.nn.Module):
@@ -79,6 +81,7 @@ class FeaturesEmbedding(torch.nn.Module):
     def __init__(self, field_dims, embed_dim):
         super().__init__()
         self.embedding = torch.nn.Embedding(sum(field_dims), embed_dim)
+        # 每个field_dim的起始位置
         self.offsets = np.array((0, *np.cumsum(field_dims)[:-1]), dtype=np.long)
         torch.nn.init.xavier_uniform_(self.embedding.weight.data)
 
@@ -86,6 +89,7 @@ class FeaturesEmbedding(torch.nn.Module):
         """
         :param x: Long tensor of size ``(batch_size, num_fields)``
         """
+        # 原值+offset并embedding
         x = x + x.new_tensor(self.offsets).unsqueeze(0)
         return self.embedding(x)
 
@@ -203,6 +207,7 @@ def test_pre(model, data_loader, device):
 
 def train_noFullBatch(model, controller, optimizer, optimizer_controller, data_loader, criterion, device, batch_size, data_a_batch, losses, selected_data_path, epoch_i, dataset_name, ControllerLoss, epsilon):
     tk0 = tqdm.tqdm(data_loader, smoothing=0, mininterval=1.0)
+    # 不同batch的平均loss
     prev_avg_list = torch.sum(losses[:-1, :], dim=0).div((len(losses)-1))
     idx_start = 0
     idx_end = 0
@@ -225,6 +230,10 @@ def train_noFullBatch(model, controller, optimizer, optimizer_controller, data_l
                 sampled_actions = torch.argmax(prob_instance, dim=1).squeeze()
                 sampled_actions = torch.tensor([action if random.random()>epsilon else -(action-1) for action in sampled_actions]).to(device)
                 prob_idx = torch.nonzero(sampled_actions).squeeze()
+
+                # sampled_actions = torch.argmax(prob_instance, dim=1).squeeze()
+                # sampled_actions = [1 if random.random()<action else 0 for action in prob_instance[:,-1]]
+                # prob_idx = torch.nonzero(sampled_actions).squeeze()
             except:
                 print("error: ================================", i)
                 continue
@@ -267,6 +276,7 @@ def save_update_model(controller, model, fields, target, device, selected_data_p
         try:
             sampled_actions = torch.argmax(prob_instance, dim=-1).squeeze()
             prob_idx = torch.nonzero(sampled_actions).squeeze()
+            print(prob_idx.size())
         except:
             print("\t error: kmax_pooling fail!")
             return
@@ -350,6 +360,7 @@ def select_instance(data_loader, selected_data_path, controller, batch_size, dat
         with torch.no_grad():
             output_layer = controller(fields)
             prob_instance = torch.softmax(output_layer, dim=-1)
+            print("sample_instance: ", prob_instance[:10,1])
             try:
                 prob_idx = kmax_pooling(prob_instance[:,1], 0, data_a_batch)
             except:
@@ -405,7 +416,7 @@ def main(dataset_name,
     train_data_loader = DataLoader(dataset_train, batch_size=batch_size, num_workers=8)
     valid_data_loader = DataLoader(dataset_valid, batch_size=batch_size, num_workers=8)
     test_data_loader = DataLoader(dataset_test, batch_size=batch_size, num_workers=8)
-
+    # 每个属性的维度（最大id+1）
     field_dims = []
     for i in range(len(dataset_train.field_dims)):
         field_dims.append(max(dataset_train.field_dims[i], dataset_valid.field_dims[i], dataset_test.field_dims[i]))
@@ -432,6 +443,7 @@ def main(dataset_name,
             params=model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
         print('Pretrain epoch:', epoch_i)
+        # 记录epoch index
         training_step[1] = epoch_i
         train_pre(model, optimizer, train_data_loader,
                   criterion, device, losses, training_step)
@@ -515,7 +527,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dataset_path', help='criteo/train.txt, avazu/train, or ml-1m/ratings.dat', default='')
     parser.add_argument('--model_name', default='dfm')
-    parser.add_argument('--epoch', type=int, default=50)
+    parser.add_argument('--epoch', type=int, default=10)# 50
     parser.add_argument('--pretrain_epoch', type=int, default=3)
     parser.add_argument('--retrain_per_n', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=0.001)

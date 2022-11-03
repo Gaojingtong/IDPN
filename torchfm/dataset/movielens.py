@@ -71,3 +71,4 @@ class Movielens1MDataset(Dataset):
         field = self.field[item]
         label = self.label[item]
         return field, label
+
